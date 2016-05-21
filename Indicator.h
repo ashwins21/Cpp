@@ -7,6 +7,6 @@ class Indicator
 {
 public:
 	virtual int GetSignal(FuturePrice p, vector<double>v) const=0;
-	virtual Indicator* clone();
+	virtual Indicator* clone() const=0;
 	Indicator() {};
 };
