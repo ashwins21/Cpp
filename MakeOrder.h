@@ -1,7 +1,7 @@
 #pragma once
 class MakeOrder {
 public:
-	MakeOrder(int ticker, int signal, double volume, bool market_);
+	MakeOrder(int ticker, int signal, double volume, bool market);
 	//fix Order();
 private:
 	int ticker_;
