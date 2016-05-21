@@ -5,7 +5,7 @@ using std::vector;
 class CurrentPosition{
 public:
 	CurrentPosition();
-	vector <double,double,double> getPosition();
+	vector <double,double,double> getPosition();  //ticker, volume, cost
 	void UpdatePosition(fix::msg);
 	double GetPnL();
 	void UpdatePnL(DataInput);
