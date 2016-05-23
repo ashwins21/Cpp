@@ -1,21 +1,19 @@
 #pragma once
 #include <vector>
+//#include "PriceGenerator.h"
+//#include "CurrentPosition.h"
 using std::vector;
-
 
 class FuturePrice
 {
 public:
-	FuturePrice();
-	void GetTrades(DataInput da, CurrentPosition& cur);
-	//update current position and
-	//append Pnl to list.
-	vector <double,double>RollingMean(int time);
-	vector <double,double>RollingStd(int time);
-	vector <double,double>GetRollingTrades();
+	FuturePrice(int n = 30);
+	vector<vector<double>> GeneratePrice(int n);
+	vector<double>GetPrice()const;
+	int GetNumTrade()const;
 protected:
-	vector <double,double>trades_;
+	vector <vector<double>>prices_;
 	int time_;
-	//vector <double,double>rollingMean_;
-	//vector <double,double>rollingStd_;
-}
+	int numTrade_;
+	vector<double>price_;
+};
