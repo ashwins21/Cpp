@@ -20,3 +20,9 @@ vector<vector<double>> FuturePrice::GeneratePrice(int N)
 	}
 	return temp;
 }
+vector<double>FuturePrice::GetPrice() const{
+	return price_;
+}
+int FuturePrice::GetNumTrade() const{
+	return numTrade_;
+}
