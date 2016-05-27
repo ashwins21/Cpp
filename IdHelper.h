@@ -5,27 +5,28 @@
 
 using std::string;
 
-/// Creates unique IDs for orders and market data subscriptions
+// Creates unique IDs for orders and market data subscriptions
 class IdHelper
 {
 public:
+	IdHelper();
+
+	~IdHelper();
 
 	static string GetNextOrderId();
 
 	static string GetCurrentOrderId();
-
+	
 	static string GetNextMDRequestId();
-
+	
 	static void WriteOrderIdToFile();
-
-	static void ReadOrderIdFromFile();
+	
+	int ReadOrderIdFromFile();
 
 private:
-	IdHelper();
 	IdHelper(const IdHelper&) = delete;
 	IdHelper& operator=(const IdHelper&) = delete;
 
-private:
 	static int orderId_;
 	static int mdRequestId_;
 };

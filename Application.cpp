@@ -1,30 +1,30 @@
-//Thanks to Mike Gatney (Connamara Systems) for QF tips and documentation 
+//Thanks to Mike Gatney (Connamara Systems) for QF tips and documentation
 
 #include "Application.h"
+#include "DataStruct.h"
+#include "DataVector.h"
+
 
 #include <quickfix/Session.h>
+#include <quickfix/fix42/MarketDataIncrementalRefresh.h>
+#include <quickfix/fix42/MarketDataSnapshotFullRefresh.h>
 
 #include <iostream>
 #include <sstream>
-#include <fstream>
 
-using std::endl;
-using std::cout;
-using std::ifstream;
-using std::ofstream;
+
+
 using std::string;
+using std::cout;
+using std::endl;
 
 Application::Application(string& configFile)
 	: configFile_(configFile)
 {
-	mySenderCompId_ = "UCHIDTS1";
-	IdHelper::ReadOrderIdFromFile();
 }
 
 Application::~Application()
 {
-	IdHelper::WriteOrderIdToFile();
-
 	if (initiator_) initiator_->stop();
 	delete initiator_;
 	delete logFactory_;
@@ -36,32 +36,35 @@ Application::~Application()
 void Application::Init()
 {
 	// Boilerplate quickfix setup:
+	
 	sessionSettings_ = new FIX::SessionSettings(configFile_);
 	messageStoreFactory_ = new FIX::FileStoreFactory(*sessionSettings_);
 	logFactory_ = new FIX::FileLogFactory(*sessionSettings_);
-	initiator_ = new FIX::SocketInitiator(*this,
-		*messageStoreFactory_,
-		*sessionSettings_,
-		*logFactory_);
-	initiator_->start();
+	
+	initiator_ = new FIX::SocketInitiator(*this, 
+							*messageStoreFactory_, 
+							*sessionSettings_, 
+							*logFactory_);
 
-	// Logging on
-	for (int i = 0; i < 3; ++i)
+
+	initiator_->start();
+	
+	// Logging on to market data (prices) FIX session
+	for(int i = 0; i < 3; ++i)
 	{
-		FIX::Session * orderSession = FIX::Session::lookupSession(orderSessionId_);
-		if (orderSession)
+		FIX::Session* mdSession = FIX::Session::lookupSession(mdSessionId_);
+		if(mdSession)
 		{
-			if (orderSession->isLoggedOn())
-			{
-				return;
-			}
+			if(mdSession->isLoggedOn()) return;
 		}
-		cout << "[init] Waiting for all FIX Sessions to logon..." << endl;
+
+		std::cout << "[init] Waiting for all FIX Sessions to logon..." << std::endl;
 		FIX::process_sleep(2);
 	}
 
-	throw std::runtime_error("[init] Fatal error: timed out waiting for FIX Session to logon!");
+	throw std::runtime_error("[init] Fatal error: timed out waiting for all FIX Sessions to logon!");
 }
+
 
 void Application::Run()
 {
@@ -75,323 +78,262 @@ void Application::Run()
 
 			switch (action)
 			{
-			case '1':
-				sendMarketOrder();
-				break;
-			case '2':
-				sendLimitOrder();
-				break;
-			case '3':
-				sendCancelOrder();
-				break;
-			case '4':
-				sendCancelReplaceOrder();
-				break;
-			case '5':
+			case '0':
 				keepRunning = false;
+				break;
+
+			case '1':
+				sendMarketDataRequest();
 				break;
 			}
 		}
-		catch (std::exception & e)
+		catch (std::exception& e)
 		{
-			cout << "Message Not Sent: " << e.what() << endl;
+			std::cout << "Message Not Sent: " << e.what();
 		}
 	}
 }
 
 char Application::queryAction()
 {
-	cout << endl
-		<< "1) Enter Market Order" << endl
-		<< "2) Enter Limit Order" << endl
-		<< "3) Cancel Order" << endl
-		<< "4) Replace Order" << endl
-		<< "5) Quit" << endl;
-
-	cout << "Enter Action: ";
-
 	char value;
+	std::cout << std::endl
+		<< "1) Market Data Request" << std::endl
+		<< "0) Quit" << std::endl
+		<< "Action: ";
+
 	std::cin >> value;
 
 	return value;
 }
 
-//TT API:
-//https://www.tradingtechnologies.com/help/fix-adapter-reference/whats-new-in-fix-adapter-717x/
+//https://www.tradingtechnologies.com/help/fix-adapter-reference/market-data-request-v/
 
-//https://www.tradingtechnologies.com/help/fix-adapter-reference/new-order---single-d/
-void Application::sendMarketOrder()
+void Application::sendMarketDataRequest()
 {
-	FIX42::NewOrderSingle newOrder;
+	FIX42::MarketDataRequest msg;
 
-	newOrder.setField(FIX::ClOrdID(IdHelper::GetNextOrderId()));
-	//newOrder.setField(FIX::HandlInst('1'));
-	newOrder.setField(FIX::TransactTime());
+	msg.set(FIX::MDReqID(IdHelper::GetNextMDRequestId()));
+	msg.set(FIX::SubscriptionRequestType(FIX::SubscriptionRequestType_SNAPSHOT_PLUS_UPDATES));
+	msg.set(FIX::MarketDepth(1));
+	msg.set(FIX::MDUpdateType(FIX::MDUpdateType_INCREMENTAL_REFRESH));
+	msg.set(FIX::AggregatedBook(FIX::AggregatedBook_YES));
 
-	//component block: instrument
-	newOrder.setField(FIX::SecurityExchange("CME"));
-	newOrder.setField(FIX::Symbol("ES"));
-	newOrder.setField(FIX::SecurityType("FUT"));
-	newOrder.setField(FIX::MaturityMonthYear("201606"));
+	// We want best bid, best offer, and last trade notifications
+	FIX42::MarketDataRequest::NoMDEntryTypes marketDataEntryGroup;
+	marketDataEntryGroup.set(FIX::MDEntryType(FIX::MDEntryType_BID));
+	msg.addGroup(marketDataEntryGroup);
+	marketDataEntryGroup.set(FIX::MDEntryType(FIX::MDEntryType_OFFER));
+	msg.addGroup(marketDataEntryGroup);
+	marketDataEntryGroup.set(FIX::MDEntryType(FIX::MDEntryType_TRADE));
+	msg.addGroup(marketDataEntryGroup);
 
-	//component block: trader
-	newOrder.setField(FIX::Account(mySenderCompId_));
-	newOrder.setField(FIX::Rule80A('A'));
-	newOrder.setField(FIX::CustomerOrFirm(0));
+	msg.set(FIX::NoRelatedSym(1));
 
-	newOrder.setField(FIX::OrderQty(1));
-	newOrder.setField(FIX::Side(FIX::Side_BUY));
-	newOrder.setField(FIX::OrdType(FIX::OrdType_MARKET));
-	newOrder.setField(FIX::TimeInForce(FIX::TimeInForce_DAY)); //this is default value
+	// Repeating group for the instrument to which we are subscribing:
+	//group 1
+	FIX42::MarketDataRequest::NoRelatedSym symbolGroup1;
+	symbolGroup1.set(FIX::Symbol("ES"));
+	symbolGroup1.set(FIX::MaturityMonthYear("201606"));
+	symbolGroup1.set(FIX::SecurityExchange("CME"));
+	symbolGroup1.set(FIX::SecurityType("FUT"));
+	msg.addGroup(symbolGroup1);
 
-	FIX::Session::sendToTarget(newOrder, orderSessionId_);
+	//group 2
+	
+	FIX42::MarketDataRequest::NoRelatedSym symbolGroup2;
+	symbolGroup2.set(FIX::Symbol("NQ"));
+	symbolGroup2.set(FIX::MaturityMonthYear("201606"));
+	symbolGroup2.set(FIX::SecurityExchange("CME"));
+	symbolGroup2.set(FIX::SecurityType("FUT"));
+	msg.addGroup(symbolGroup2);
+	
+
+	FIX::Session::sendToTarget(msg, mdSessionId_);
+	//cout << "hi3" << endl;
 }
 
-void Application::sendLimitOrder()
+/////////////////////////
+// Callback Methods
+/////////////////////////
+
+//https://www.tradingtechnologies.com/help/fix-adapter-reference/market-data-snapshotfull-refresh-w/
+
+void Application::onMessage(const FIX42::MarketDataSnapshotFullRefresh& msg,
+	const FIX::SessionID&)
 {
-	cout << "Sending Limit Order" << endl;
+	cout << "Hi_1" << endl;
+	FIX::MDReqID id;
+	msg.get(id);
+	
+	FIX::NoMDEntries noMDEntries;
+	msg.get(noMDEntries);
+	for (int i = 1; i <= noMDEntries; ++i)
+	{
+		FIX42::MarketDataSnapshotFullRefresh::NoMDEntries group;
+		FIX::MDEntryType type;
+		FIX::MDEntryPx px;
+		FIX::MDEntrySize qty;
+		
+		msg.getGroup(i, group);
+		group.get(type);
+		group.get(px);
+		group.get(qty);
+		
 
-	FIX42::NewOrderSingle newOrder;
-
-	newOrder.setField(FIX::ClOrdID(IdHelper::GetNextOrderId()));
-	//newOrder.setField(FIX::HandlInst('1'));
-	newOrder.setField(FIX::Symbol("ES"));
-	newOrder.setField(FIX::Side(FIX::Side_BUY));
-	newOrder.setField(FIX::TransactTime());
-	newOrder.setField(FIX::OrdType(FIX::OrdType_LIMIT));
-	newOrder.setField(FIX::Price(200550));
-	newOrder.setField(FIX::OrderQty(1));
-	newOrder.setField(FIX::TimeInForce(FIX::TimeInForce_DAY));
-	newOrder.setField(FIX::SecurityExchange("CME"));
-	newOrder.setField(FIX::SecurityType("FUT"));
-	newOrder.setField(FIX::MaturityMonthYear("201606"));
-	newOrder.setField(FIX::Account(mySenderCompId_));
-	newOrder.setField(FIX::CustomerOrFirm(0));
-	newOrder.setField(FIX::Rule80A('A'));
-
-	FIX::Session::sendToTarget(newOrder, orderSessionId_);
+		if (FIX::MDEntryType_BID == type.getValue())
+		{
+			cout << "id: " << id << ", bid: " << qty.getValue() << ", " << px.getValue() << endl;
+		}
+		else if (FIX::MDEntryType_OFFER == type.getValue())
+		{
+			cout << "id: " << id << ", offer: " << qty.getValue() << ", " << px.getValue() << endl;
+		}
+		else if (FIX::MDEntryType_TRADE == type.getValue())
+		{
+			cout << "id: " << id << ", trade: " << qty.getValue() << ", " << px.getValue() << endl;
+			//DataStruct data(id, px.getValue(), qty.getValue());
+			//updatemap(data);
+			//count_++;
+			//cout << "count "<<count_ << endl;
+			//printmap();
+		}
+		else
+		{
+			std::cout << "Unknown MDEntryType: " << type << std::endl;
+		}
+		//cout << "Hi_3" << endl;
+	}
 }
 
-void Application::sendCancelOrder()
+//https://www.tradingtechnologies.com/help/fix-adapter-reference/market-data---incremental-refresh-x/
+
+void Application::onMessage(const FIX42::MarketDataIncrementalRefresh& msg, const FIX::SessionID&)
+//
 {
-	cout << "Sending Cancel Order" << endl;
-
-
-	FIX42::OrderCancelRequest cancelOrder;
-	cancelOrder.setField(FIX::OrigClOrdID(IdHelper::GetCurrentOrderId()));
-	cancelOrder.setField(FIX::ClOrdID(IdHelper::GetNextOrderId()));
-
-
-	FIX::Session::sendToTarget(cancelOrder, orderSessionId_);
-}
-
-void Application::sendCancelReplaceOrder()
-{
-	cout << "Sending Cancel Replace Order" << endl;
-
-	FIX42::OrderCancelReplaceRequest cancelReplace;
-
-	//incomplete
-
-}
-
-
-//https://www.tradingtechnologies.com/help/fix-adapter-reference/execution-report-8/
-
-void Application::onMessage(const FIX42::ExecutionReport& msg, const FIX::SessionID&)
-{
-	FIX::ExecType execType;
+	cout << "call incremental" << endl;
+	FIX::MDReqID id;
+	msg.get(id);
 	FIX::Symbol symbol;
-	FIX::MaturityMonthYear maturityMonthYear;
-	FIX::Side side;
+	FIX::NoMDEntries noMDEntries;
+	msg.get(noMDEntries);
+	for (int i = 1; i <= noMDEntries; ++i)
+	{
+		FIX42::MarketDataIncrementalRefresh::NoMDEntries group;
+		FIX::MDEntryType type;
+		FIX::MDEntryPx px;
+		FIX::MDEntrySize qty;
+		FIX::MDUpdateAction action;
 
-	// See what kind of execution report this is:
-	msg.get(execType);
+		msg.getGroup(i, group);
+		group.get(type);
+		group.get(px);
+		group.get(qty);
+		group.get(action);
+		group.get(symbol);
+		if (FIX::MDUpdateAction_NEW == action.getValue() || 
+			FIX::MDUpdateAction_CHANGE == action.getValue())
+		{
+			cout << "symbol" << symbol.getValue()<<endl;
+			if (FIX::MDEntryType_BID == type.getValue())
+			{
+				cout <<  "id: " << id << ", bid: " << qty.getValue() << ", " << px.getValue() << endl;
+			}
+			else if (FIX::MDEntryType_OFFER == type.getValue())
+			{
+				cout << "id: " << id << ", offer: " << qty.getValue() << ", " << px.getValue() << endl;
+			}
+			else if (FIX::MDEntryType_TRADE == type.getValue())
+			{
+				cout << "id: " << id << ", trade: " << qty.getValue() << ", " << px.getValue() << endl;
 
-	if (FIX::ExecType_FILL == execType.getValue()
-		|| FIX::ExecType_PARTIAL_FILL == execType.getValue())
-	{
-		FIX::LastShares lastQty;
-		FIX::LastPx lastPx;
-		msg.get(symbol);
-		msg.get(maturityMonthYear);
-		msg.get(side);
-		msg.get(lastQty);
-		msg.get(lastPx);
+				DataStruct data(symbol.getValue(), px.getValue(), qty.getValue());
+				updatemap(data);
+				count_ ++;
+				printmap();
 
-		if (FIX::Side_BUY == side)
-		{
-			cout << "Bought, Qty: " << lastQty.getValue()
-				<< " Price: " << lastPx.getValue();
+			}
+			else
+			{
+				std::cout << "Unknown MDEntryType: " << type << std::endl;
+			}
 		}
-		else if (FIX::Side_SELL == side)
-		{
-			cout << "Sold, Qty: " << lastQty.getValue()
-				<< " Price: " << lastPx.getValue();
-		}
-	}
-	else if (FIX::ExecType_REJECTED == execType.getValue())
-	{
-		FIX::OrderQty orderQty;
-		msg.get(symbol);
-		msg.get(maturityMonthYear);
-		msg.get(side);
-		msg.get(orderQty);
-
-		if (FIX::Side_BUY == side)
-		{
-			cout << "Buy Order Rejected, Qty: " << orderQty.getValue() << endl;
-		}
-		else if (FIX::Side_SELL == side)
-		{
-			cout << "Sell Order Rejected, Qty: " << orderQty.getValue() << endl;
-		}
-	}
-	else if (FIX::ExecType_NEW == execType.getValue())
-	{
-		// Our order was accepted (but has not yet been filled)
-		cout << "New Order Received: " << symbol << endl;
-	}
-	else if (FIX::ExecType_CANCELED == execType.getValue())
-	{
-		cout << "Order Canceled: " << symbol << endl;
-	}
-	else
-	{
-		cout << "Not sure what to do with ExecutionReport with ExecType = " <<
-			execType << ": " << msg << endl;
 	}
 }
 
-//-----------------------------------------------------------------------------
-// Called by QF when an App-type message is received from the counterparty.
-//
-// Examples of Application-type messages are ExecutionReport and CancelReject.
-// We could just write all of our code for handling these message right here in
-// this callback.
-//
-// However, we would probably end up with a really, really long function if we
-// did that.  Instead, we usually just call the QF crack() function here, which
-// calls the proper onMessage() callback for whatever MsgType we just received.
-void Application::fromApp(const FIX::Message& message, const FIX::SessionID& sessionID)
-throw(FIX::FieldNotFound, FIX::IncorrectDataFormat,
-	FIX::IncorrectTagValue, FIX::UnsupportedMessageType)
+void Application::fromApp(const FIX::Message& message, const FIX::SessionID& sessionId)
+throw(FIX::FieldNotFound, FIX::IncorrectDataFormat, FIX::IncorrectTagValue, FIX::UnsupportedMessageType)
 {
-	cout << endl << "IN: " << message << endl;
-	crack(message, sessionID);
+	crack(message, sessionId);
 }
 
-//-----------------------------------------------------------------------------
-// Called by QF after we call Session::sendToTarget() to send a message, right
-// before the message is actually transmitted.  
-//
-// Examples of App-type messages that we might send are NewOrderSingle,
-// OrderCancelRequest, and MarketDataRequest.
-//
-// The FIX Protocol guarantees in-order delivery of all messages.  For example,
-// if you temporarily lose your network connection, FIX Protocol ensures that
-// any messages that failed to make it to either counterparty will be
-// re-transmitted.
-//
-// This is helpful behaviour when you are, say, receiving an ExecutionReport.  It
-// is probably NOT helpful behaviour if say, you send a NewOrderSingle which gets
-// re-transmitted an hour later when the network suddenly comes back up and the
-// market has moved significantly!
-//
-// This is your chance to thwart the automatic resend behaviour if you do not
-// want it.
-void Application::toApp(FIX::Message& message, const FIX::SessionID& sessionID) throw(FIX::DoNotSend)
-{
-	try
-	{
-		FIX::PossDupFlag possDupFlag;
-		message.getHeader().getField(possDupFlag);
-		if (possDupFlag) throw FIX::DoNotSend();
-	}
-	catch (FIX::FieldNotFound&) {}
-
-	cout << endl
-		<< "OUT: " << message << endl;
-}
-
-
-//-----------------------------------------------------------------------------
-// Called by QF when a Session is created (but before it is logged on).
-// We do not usually do anything here.
 void Application::onCreate(const FIX::SessionID& sessionId)
 {
+	mdSessionId_ = sessionId;
 }
 
-//-----------------------------------------------------------------------------
-// Called by QF whenever a Session is successfully logged on.
-//
-// We need to know which SessionID to use when sending orders vs sending a
-// market data subscription.  The onLogon() callback is a good time to
-// distinguish between the two Sessions.  We will use a couple of custom config
-// file options to help us do that.
-void Application::onLogon(const FIX::SessionID& sessionId)
+void Application::onLogon( const FIX::SessionID& sessionId )
 {
-
 	// Ask QF for the SessionSettings for this Session
 	const FIX::Dictionary* settings = initiator_->getSessionSettings(sessionId);
 
-	// Grab our custom "MyOrderSession" parameter (if it exists) from the SessionSettings
-	if (settings->has("MyOrderSession") && settings->getBool("MyOrderSession"))
+	// Grab our custom "MyMarketDataSession" parameter (if it exists) from the SessionSettings
+	if(settings->has("MyMarketDataSession") && settings->getBool("MyMarketDataSession"))
 	{
-		orderSessionId_ = sessionId;
-
-		cout << "[onLogon] " << orderSessionId_ << " (MyOrderSession)" << endl;
+		mdSessionId_ = sessionId;
+		std::cout << "[onLogon] " << mdSessionId_ << " (MyMarketDataSession)" << std::endl;
 	}
 }
 
-//-----------------------------------------------------------------------------
-// Called by QF whenever a Session is successfully logged out.
-//
-void Application::onLogout(const FIX::SessionID& sessionID)
+void Application::onLogout( const FIX::SessionID&)
 {
-	cout << "Logout - " << sessionID << endl;
 }
 
-
-//-----------------------------------------------------------------------------
-// Called by QF when an Admin-type message is received from the counterparty.
-//
-// Examples of Admin-type messages are Logon, Logout, and Heartbeat.
-//
-// We almost never want or need to do anything in this callback.  QF handles
-// these types of messages for us automatically.
-void Application::fromAdmin(const FIX::Message&, const FIX::SessionID&)
-throw(FIX::FieldNotFound, FIX::IncorrectDataFormat, FIX::IncorrectTagValue, FIX::RejectLogon)
+void Application::fromAdmin( const FIX::Message&, const FIX::SessionID& ) 
+	throw( FIX::FieldNotFound, FIX::IncorrectDataFormat, FIX::IncorrectTagValue, FIX::RejectLogon )
 {}
 
 
-//-----------------------------------------------------------------------------
-// Called by QF right before an Admin-type message is sent to the counterparty.
-//
-// Examples of Admin-type messages are Logon, Logout, and Heartbeat.  We never
-// send these types of messages ourselves -- QF does so for us automatically.
-//
-// However, we may need to customize the content of an Admin-type -- e.g., our
-// counterparty may require us to specify a username or password.
-void Application::toAdmin(FIX::Message& message, const FIX::SessionID& sessionId)
+void Application::toAdmin( FIX::Message& message, const FIX::SessionID& sessionId) 
 {
 	// First we have to figure out what the message is
 	// Remember: Msgtype is in the header, not the body!
 	FIX::MsgType msgType;
 	message.getHeader().getField(msgType);
-
+	
 	// Tip: right-click 'FIX::MsgType_Logon' and select 'Go To Definition' to see other useful contants that QF defines for you.
 	// Tip: hover your mouse cursor over 'FIX::MsgType_Logon' to see its value.
-	if (FIX::MsgType_Logon == msgType)
+	if(FIX::MsgType_Logon == msgType)
 	{
 		const FIX::Dictionary * settings = initiator_->getSessionSettings(sessionId);
-		if (settings->has("MyPassword"))
+		if(settings->has("MyPassword"))
 		{
 			message.setField(FIX::RawData(settings->getString("MyPassword")));
 		}
 		else
 		{
-			cout << "Warning: MyPassword not found in cfg file for session " << sessionId << endl;
+			std::cout << "Warning: MyPassword not found in cfg file for session " << sessionId << std::endl;
 		}
 	}
 }
+
+
+void Application::toApp( FIX::Message& message, const FIX::SessionID& sessionId)
+throw( FIX::DoNotSend )
+{
+	try
+	{
+		FIX::PossDupFlag possDupFlag;
+		message.getHeader().getField( possDupFlag );
+		if ( possDupFlag ) throw FIX::DoNotSend();
+	}
+	catch ( FIX::FieldNotFound& ) {}
+
+	std::cout << std::endl
+	<< "OUT: " << message << std::endl;
+}
+
+
+
+
+

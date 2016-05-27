@@ -6,29 +6,35 @@
 int IdHelper::orderId_ = 0;
 int IdHelper::mdRequestId_ = 0;
 
+IdHelper::IdHelper()
+{
+	orderId_ = ReadOrderIdFromFile();
+}
+
+IdHelper::~IdHelper()
+{
+	WriteOrderIdToFile();
+}
 
 void IdHelper::WriteOrderIdToFile()
 {
-	std::ofstream file("..\\config\\orderid.txt", std::ios::trunc);
+	std::ofstream file("orderid.txt", std::ios::trunc);
 	file << orderId_ << '\n';
 }
 
-void IdHelper::ReadOrderIdFromFile()
+int IdHelper::ReadOrderIdFromFile()
 {
-	std::ifstream file("..\\config\\orderid.txt");
+	std::ifstream file("orderid.txt");
 	std::string s;
 	std::getline(file, s);
-	orderId_ = s.empty() ? 0 : std::stoi(s);
+	return s.empty() ? 0 : std::stoi(s);
 }
 
 std::string IdHelper::GetNextOrderId()
 {
-	ReadOrderIdFromFile();
 	orderId_++;
 	std::stringstream s;
 	s << orderId_;
-	WriteOrderIdToFile();
-
 	return s.str();
 }
 
